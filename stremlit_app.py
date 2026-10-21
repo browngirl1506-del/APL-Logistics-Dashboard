@@ -1,187 +1,222 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import matplotlib.pyplot as plt
 
-# ---------------- PAGE CONFIG ----------------
 st.set_page_config(
     page_title="APL Logistics Dashboard",
     page_icon="📦",
     layout="wide"
 )
 
-# ---------------- CUSTOM DESIGN ----------------
-st.markdown("""
-<style>
-.stApp {
-    background-color: #0b1220;
-    color: #f1f5f9;
-}
-[data-testid="stMetric"] {
-    background-color: #172338;
-    padding: 18px;
-    border-radius: 12px;
-    border: 1px solid #293950;
-}
-[data-testid="stMetricLabel"] {
-    color: #a9bbd0;
-}
-h1, h2, h3 {
-    color: #55d6be;
-}
-</style>
-""", unsafe_allow_html=True)
+# ---------- Load CSV ----------
+st.title("📦 APL Logistics Dashboard")
+st.caption("Sales | Customer | Product | Shipping Analysis")
 
-# ---------------- TITLE ----------------
-st.title("📦 APL LOGISTICS ANALYTICS")
-st.caption("Sales • Profit • Customers • Products • Shipping")
-
-# ---------------- LOAD DATA ----------------
 @st.cache_data
 def load_data():
-    file_path = "APL_Logistics_small2.csv"
-    data = pd.read_csv(file_path, low_memory=False)
-    data.columns = data.columns.astype(str).str.strip()
-    return data
+    return pd.read_csv("APL_Logistics_small2.csv")
 
 try:
     df = load_data()
 except Exception as e:
-    st.error("CSV फ़ाइल लोड नहीं हो पाई।")
-    st.write("जाँचो कि APL_Logistics_small2.csv और streamlit_app.py एक ही GitHub repository में हैं।")
-    st.code(str(e))
+    st.error("CSV file load nahi hui. GitHub par CSV ka exact filename check karein.")
     st.stop()
 
-if df.empty:
-    st.error("CSV फ़ाइल में कोई डेटा नहीं है।")
-    st.stop()
+df.columns = df.columns.str.strip()
 
-# ---------------- HELPERS ----------------
-def find_column(possible_names):
-    """CSV में उपलब्ध कॉलम के अनुसार सही कॉलम ढूँढें।"""
+# ---------- Find columns flexibly ----------
+def find_col(*names):
     normalized = {
-        str(col).lower().replace("_", " ").strip(): col
-        for col in df.columns
+        str(c).strip().lower().replace("_", " "): c
+        for c in df.columns
     }
-
-    for name in possible_names:
-        key = name.lower().replace("_", " ").strip()
+    for name in names:
+        key = name.strip().lower().replace("_", " ")
         if key in normalized:
             return normalized[key]
-
     return None
 
+customer_id = find_col("Customer Id", "Customer ID", "CustomerId")
+customer_name = find_col("Customer Name", "CustomerName")
+city = find_col("Customer City", "City")
+country = find_col("Customer Country", "Country")
+category = find_col("Category Name", "Category")
+product = find_col("Product Name", "ProductName")
+sales_col = find_col("Sales", "Order Item Total")
+quantity = find_col("Order Item Quantity", "Order Item Quantity ")
+shipping = find_col("Shipping Mode", "ShippingMode")
+profit = find_col("Order Profit Per Order", "Order Profit per Order")
+profit_ratio = find_col("Order Item Profit Ratio", "Benefit per order")
+state = find_col("Order State", "Customer State", "State")
+region = find_col("Order Region", "Region")
 
-sales_col = find_column(["Sales", "Order Item Total"])
-profit_col = find_column([
-    "Order Profit Per Order",
-    "Profit",
-    "Gross Profit"
-])
-customer_col = find_column(["Customer Id", "Customer ID"])
-product_col = find_column(["Product Name"])
-category_col = find_column([
-    "Category Name",
-    "Customer Category Name"
-])
-region_col = find_column(["Order Region", "Region"])
-shipping_col = find_column(["Shipping Mode"])
-segment_col = find_column(["Customer Segment"])
-quantity_col = find_column([
-    "Order Item Quantity",
-    "Quantity"
-])
-order_col = find_column(["Order Id", "Order ID"])
-status_col = find_column(["Order Status"])
-date_col = find_column(["Order Date"])
-
-# Convert numeric columns safely
-for col in [sales_col, profit_col, quantity_col]:
+# Convert numerical fields safely
+for col in [sales_col, quantity, profit, profit_ratio]:
     if col:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-# ---------------- SIDEBAR FILTERS ----------------
-st.sidebar.title("🔎 Dashboard Filters")
+# ---------- Sidebar filters ----------
+st.sidebar.header("Dashboard Filters")
 
-filtered_df = df.copy()
+filtered = df.copy()
 
-filter_columns = [
-    ("Region", region_col),
-    ("Category", category_col),
-    ("Shipping Mode", shipping_col),
-    ("Customer Segment", segment_col),
-    ("Order Status", status_col),
-]
+if category:
+    options = sorted(filtered[category].dropna().astype(str).unique())
+    chosen = st.sidebar.multiselect(
+        "Category", options, default=options
+    )
+    filtered = filtered[
+        filtered[category].astype(str).isin(chosen)
+    ]
 
-for label, col in filter_columns:
-    if col and col in filtered_df.columns:
-        options = sorted(
-            filtered_df[col].dropna().astype(str).unique().tolist()
+if shipping:
+    options = sorted(filtered[shipping].dropna().astype(str).unique())
+    chosen = st.sidebar.multiselect(
+        "Shipping Mode", options, default=options
+    )
+    filtered = filtered[
+        filtered[shipping].astype(str).isin(chosen)
+    ]
+
+if region:
+    options = sorted(filtered[region].dropna().astype(str).unique())
+    chosen = st.sidebar.multiselect(
+        "Region", options, default=options
+    )
+    filtered = filtered[
+        filtered[region].astype(str).isin(chosen)
+    ]
+
+# ---------- KPI cards ----------
+total_sales = filtered[sales_col].sum() if sales_col else 0
+total_profit = filtered[profit].sum() if profit else 0
+total_quantity = filtered[quantity].sum() if quantity else 0
+total_customers = (
+    filtered[customer_id].nunique()
+    if customer_id else
+    filtered[customer_name].nunique()
+    if customer_name else 0
+)
+
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Total Sales", f"{total_sales:,.2f}")
+c2.metric("Total Profit", f"{total_profit:,.2f}")
+c3.metric("Total Customers", f"{total_customers:,}")
+c4.metric("Total Quantity", f"{total_quantity:,.0f}")
+
+st.divider()
+
+# ---------- Sales analysis ----------
+left, right = st.columns(2)
+
+with left:
+    st.subheader("📊 Sales by Product")
+    if sales_col and product:
+        chart_data = (
+            filtered.groupby(product)[sales_col]
+            .sum().nlargest(10).sort_values()
         )
-        selected = st.sidebar.multiselect(
-            label,
-            options,
-            default=options
+        st.bar_chart(chart_data)
+    else:
+        st.info("Product Name ya Sales column nahi mila.")
+
+with right:
+    st.subheader("📂 Sales by Category")
+    if sales_col and category:
+        chart_data = (
+            filtered.groupby(category)[sales_col]
+            .sum().sort_values(ascending=False)
         )
+        st.bar_chart(chart_data)
+    else:
+        st.info("Category Name ya Sales column nahi mila.")
 
-        filtered_df = filtered_df[
-            filtered_df[col].astype(str).isin(selected)
-        ]
+# ---------- Customer analysis ----------
+st.divider()
+st.subheader("👥 Customer Analysis")
 
-st.sidebar.markdown("---")
-st.sidebar.write(f"Filtered rows: {len(filtered_df):,}")
+left, right = st.columns(2)
 
-# ---------------- KPI CALCULATIONS ----------------
-def total_value(data, col):
-    if col and col in data.columns:
-        return data[col].sum()
-    return None
+with left:
+    st.write("**Sales by Customer City**")
+    if sales_col and city:
+        st.bar_chart(
+            filtered.groupby(city)[sales_col]
+            .sum().nlargest(10).sort_values()
+        )
+    else:
+        st.info("Customer City ya Sales column nahi mila.")
 
-sales_total = total_value(filtered_df, sales_col)
-profit_total = total_value(filtered_df, profit_col)
-quantity_total = total_value(filtered_df, quantity_col)
+with right:
+    st.write("**Sales by Country**")
+    if sales_col and country:
+        st.bar_chart(
+            filtered.groupby(country)[sales_col]
+            .sum().nlargest(10).sort_values()
+        )
+    else:
+        st.info("Country ya Sales column nahi mila.")
 
-customer_total = (
-    filtered_df[customer_col].nunique()
-    if customer_col else None
+# ---------- Shipping analysis ----------
+st.divider()
+st.subheader("🚚 Shipping Analysis")
+
+left, right = st.columns(2)
+
+with left:
+    if shipping:
+        st.write("**Orders by Shipping Mode**")
+        st.bar_chart(filtered[shipping].value_counts())
+    else:
+        st.info("Shipping Mode column nahi mila.")
+
+with right:
+    if profit and shipping:
+        st.write("**Profit by Shipping Mode**")
+        st.bar_chart(filtered.groupby(shipping)[profit].sum())
+    elif profit:
+        st.write("**Profit Distribution**")
+        st.bar_chart(filtered[profit].dropna().reset_index(drop=True))
+    else:
+        st.info("Order Profit Per Order column nahi mila.")
+
+# ---------- Region analysis ----------
+st.divider()
+st.subheader("🌍 Regional Analysis")
+
+left, right = st.columns(2)
+
+with left:
+    if sales_col and state:
+        st.write("**Sales by State — Top 10**")
+        st.bar_chart(
+            filtered.groupby(state)[sales_col]
+            .sum().nlargest(10).sort_values()
+        )
+    else:
+        st.info("State ya Sales column nahi mila.")
+
+with right:
+    if sales_col and region:
+        st.write("**Sales by Region**")
+        st.bar_chart(filtered.groupby(region)[sales_col].sum())
+    else:
+        st.info("Region ya Sales column nahi mila.")
+
+# ---------- Raw data ----------
+st.divider()
+st.subheader("📋 Complete Dataset")
+st.write(f"Showing {len(filtered):,} rows and {len(filtered.columns)} columns.")
+st.dataframe(filtered, use_container_width=True, height=450)
+
+st.download_button(
+    "⬇️ Download Filtered Data",
+    data=filtered.to_csv(index=False).encode("utf-8"),
+    file_name="APL_Logistics_Filtered.csv",
+    mime="text/csv"
 )
 
-order_total = (
-    filtered_df[order_col].nunique()
-    if order_col else None
-)
+with st.expander("Check CSV Column Names"):
+    st.write(df.columns.tolist())
 
-# ---------------- KPI CARDS ----------------
-st.subheader("📊 Business Overview")
-
-kpis = st.columns(5)
-
-kpis[0].metric(
-    "Total Sales",
-    f"${sales_total:,.2f}" if sales_total is not None else "N/A"
-)
-
-kpis[1].metric(
-    "Total Profit",
-    f"${profit_total:,.2f}" if profit_total is not None else "N/A"
-)
-
-kpis[2].metric(
-    "Total Customers",
-    f"{customer_total:,}" if customer_total is not None else "N/A"
-)
-
-kpis[3].metric(
-    "Total Orders",
-    f"{order_total:,}" if order_total is not None else "N/A"
-)
-
-kpis[4].metric(
-    "Total Quantity",
-    f"{quantity_total:,.0f}"
-    if quantity_total is not None else "N/A"
-)
-
-st.markdown("---")
-
-# ---------------- SALES BY CATEGORY ----------------
-left, right = st
+st.caption("APL Logistics | Interactive Business Dashboard")
